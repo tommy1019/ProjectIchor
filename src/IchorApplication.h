@@ -1,43 +1,75 @@
+#ifndef ICHOR_APPLICATION_H
+#define ICHOR_APPLICATION_H
+
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <glm/glm.hpp>
+
 #include <iostream>
 #include <vector>
+#include <array>
 
-struct QueueFamilyIndices
+#include "VulkanInstance.h"
+#include "VulkanPhysicalDevice.h"
+#include "VulkanLogicalDevice.h"
+#include "VulkanQueueFamilies.h"
+
+#include "Swapchain.h"
+
+struct Vertex
 {
-    int graphicsFamily = -1;
-    int presentFamily = -1;
+    glm::vec2 pos;
+    glm::vec3 color;
 
-    bool isComplete()
+    static VkVertexInputBindingDescription getBindingDescription()
     {
-        return graphicsFamily >= 0 && presentFamily >= 0;
-    }
-};
+        VkVertexInputBindingDescription bindingDescription = {};
 
-struct SwapChainSupportDetails
-{
-    VkSurfaceCapabilitiesKHR capabilities;
-    std::vector<VkSurfaceFormatKHR> formats;
-    std::vector<VkPresentModeKHR> presentModes;
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return bindingDescription;
+    }
+
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+    {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
 };
 
 class IchorApplication
 {
-private:
+public:
     const uint32_t WIDTH = 800;
     const uint32_t HEIGHT = 600;
 
     const int MAX_FRAMES_IN_FLIGHT = 2;
 
-    const std::vector<const char*> validationLayers = 
+    const std::vector<Vertex> vertices =
     {
-        "VK_LAYER_LUNARG_standard_validation"
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
     };
 
-    const std::vector<const char*> deviceExtensions =
+    const std::vector<uint16_t> indices =
     {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        0, 1, 2, 2, 3, 0
     };
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -52,33 +84,26 @@ private:
         return VK_FALSE;    
     }
 
-    GLFWwindow* window;
+    VulkanInstance* instance;
 
-    VkInstance instance;
-    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    VulkanPhysicalDevice* physicalDevice;
+    VulkanLogicalDevice* logicalDevice;
+
+    Swapchain* swapchain;
+
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
 
     VkDebugUtilsMessengerEXT callback;
-
-    VkDevice device;
-    VkQueue graphicsQueue;
-
-    VkSurfaceKHR surface;
-    VkQueue presentQueue;
 
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
-    VkSwapchainKHR swapChain;
-    std::vector<VkImage> swapChainImages;
-    VkFormat swapChainImageFormat;
-    VkExtent2D swapChainExtent;
-
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
-
-    std::vector<VkImageView> swapChainImageViews;
-    std::vector<VkFramebuffer> swapChainFramebuffers;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
@@ -94,19 +119,23 @@ private:
 
     void initVulkan();
 
-    void createVulkanInstance();
-
     void recreateSwapChain();
 
     void createSyncObjects();
 
     void createCommandPool();
+
+    void createVertexBuffer();
+    void createIndexBuffer();
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+
     void createCommandBuffers();
 
     void createSurface();
-    void createSwapChain();
 
-    void createImageViews();
     void createFramebuffers();
 
     void createRenderPass();
@@ -114,17 +143,9 @@ private:
     VkShaderModule createShaderModule(const std::vector<char>& code);
 
     void pickPhysicalDevice();
-    void createLogicalDevice();
 
     bool isDeviceSuitable(VkPhysicalDevice device);
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
-
-    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
-    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
-
-    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
-    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> availablePresentModes);
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions(); 
@@ -134,7 +155,15 @@ private:
     void drawFrame();
 
     void cleanup();
-    void cleanupSwapChain();
+
 public:
+    static bool checkErrors;
+
+    GLFWwindow* window;
+
+    VkSurfaceKHR surface;
+
     void run();
 };
+
+#endif

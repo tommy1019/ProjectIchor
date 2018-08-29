@@ -3,7 +3,7 @@
 #include <set>
 #include <fstream>
 
-#define ERROR_CHECKING
+bool IchorApplication::checkErrors = true;
 
 void IchorApplication::run()
 {
@@ -17,41 +17,32 @@ void IchorApplication::run()
     cleanup();
 }
 
-void IchorApplication::cleanupSwapChain()
-{
-    for (size_t i = 0; i < swapChainFramebuffers.size(); i++)
-    {
-        vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
-    }
-
-    vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
-
-    vkDestroyPipeline(device, graphicsPipeline, nullptr);
-    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-    vkDestroyRenderPass(device, renderPass, nullptr);
-
-    for (size_t i = 0; i < swapChainImageViews.size(); i++)
-    {
-        vkDestroyImageView(device, swapChainImageViews[i], nullptr);
-    }
-
-    vkDestroySwapchainKHR(device, swapChain, nullptr);
-}
-
 void IchorApplication::cleanup()
 {
-    cleanupSwapChain();
+    vkFreeCommandBuffers(logicalDevice->device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+
+    vkDestroyPipeline(logicalDevice->device, graphicsPipeline, nullptr);
+    vkDestroyPipelineLayout(logicalDevice->device, pipelineLayout, nullptr);
+    vkDestroyRenderPass(logicalDevice->device, renderPass, nullptr);
+
+    delete this->swapchain;
+
+    vkDestroyBuffer(logicalDevice->device, indexBuffer, nullptr);
+    vkFreeMemory(logicalDevice->device, indexBufferMemory, nullptr);
+
+    vkDestroyBuffer(logicalDevice->device, vertexBuffer, nullptr);
+    vkFreeMemory(logicalDevice->device, vertexBufferMemory, nullptr);
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
-        vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
-        vkDestroyFence(device, inFlightFences[i], nullptr);
+        vkDestroySemaphore(logicalDevice->device, renderFinishedSemaphores[i], nullptr);
+        vkDestroySemaphore(logicalDevice->device, imageAvailableSemaphores[i], nullptr);
+        vkDestroyFence(logicalDevice->device, inFlightFences[i], nullptr);
     }
 
-    vkDestroyCommandPool(device, commandPool, nullptr);
+    vkDestroyCommandPool(logicalDevice->device, commandPool, nullptr);
 
-    vkDestroyDevice(device, nullptr);
+    delete logicalDevice;
 
     #ifdef ERROR_CHECKING
     auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
@@ -61,8 +52,7 @@ void IchorApplication::cleanup()
     }
     #endif
 
-    vkDestroySurfaceKHR(instance, surface, nullptr);
-    vkDestroyInstance(instance, nullptr);
+    vkDestroySurfaceKHR(instance->instance, surface, nullptr);
 
     glfwDestroyWindow(window);
 
@@ -79,15 +69,15 @@ void IchorApplication::gameLoop()
         drawFrame();
     }
 
-    vkDeviceWaitIdle(device);
+    vkDeviceWaitIdle(logicalDevice->device);
 }
 
 void IchorApplication::drawFrame()
 {
-    vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
+    vkWaitForFences(logicalDevice->device, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
 
     uint32_t imageIndex;
-    VkResult result = vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    VkResult result = vkAcquireNextImageKHR(logicalDevice->device, swapchain->swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -115,9 +105,9 @@ void IchorApplication::drawFrame()
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    vkResetFences(device, 1, &inFlightFences[currentFrame]);
+    vkResetFences(logicalDevice->device, 1, &inFlightFences[currentFrame]);
 
-    VkResult sumbitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
+    VkResult sumbitResult = vkQueueSubmit(logicalDevice->graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
     if (sumbitResult != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to submit draw command buffer");
@@ -129,14 +119,14 @@ void IchorApplication::drawFrame()
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
 
-    VkSwapchainKHR swapChains[] = {swapChain};
+    VkSwapchainKHR swapChains[] = {swapchain->swapChain};
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapChains;
     presentInfo.pImageIndices = &imageIndex;
 
     presentInfo.pResults = nullptr;
 
-    result = vkQueuePresentKHR(presentQueue, &presentInfo);
+    result = vkQueuePresentKHR(logicalDevice->presentQueue, &presentInfo);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR  || framebufferResized)
     {
@@ -192,58 +182,154 @@ static std::vector<char> readFile(const std::string& filename)
 
 void IchorApplication::initVulkan()
 {
-    createVulkanInstance();
+    instance = new VulkanInstance();
+    
     setupDebugCallback();
     createSurface();
-    pickPhysicalDevice();
-    createLogicalDevice();
-    createSwapChain();
-    createImageViews();
+
+    physicalDevice = new VulkanPhysicalDevice(instance->instance, surface);
+    logicalDevice = new VulkanLogicalDevice(physicalDevice->physicalDevice, surface);
+
+    swapchain = new Swapchain(this);
+
     createRenderPass();
+
     createGraphicsPipeline();
     createFramebuffers();
     createCommandPool();
+
+    createVertexBuffer();
+    createIndexBuffer();
+
     createCommandBuffers();
     createSyncObjects();
 }
 
-void IchorApplication::createVulkanInstance()
+void IchorApplication::createIndexBuffer()
 {
-    #ifdef ERROR_CHECKING
-    if (!checkValidationLayerSupport())
+    VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(logicalDevice->device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, indices.data(), (size_t) bufferSize);
+    vkUnmapMemory(logicalDevice->device, stagingBufferMemory);
+
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+    copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+    vkDestroyBuffer(logicalDevice->device, stagingBuffer, nullptr);
+    vkFreeMemory(logicalDevice->device, stagingBufferMemory, nullptr);
+}
+
+void IchorApplication::createVertexBuffer()
+{
+    VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(logicalDevice->device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, vertices.data(), (size_t) bufferSize);
+    vkUnmapMemory(logicalDevice->device, stagingBufferMemory);
+
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+
+    copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+    vkDestroyBuffer(logicalDevice->device, stagingBuffer, nullptr);
+    vkFreeMemory(logicalDevice->device, stagingBufferMemory, nullptr);
+}
+
+void IchorApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+{
+    VkCommandBufferAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(logicalDevice->device, &allocInfo, &commandBuffer);
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
     {
-        throw std::runtime_error("[Ichor] Cannot enable error checking");
+        VkBufferCopy copyRegion = {};
+        copyRegion.srcOffset = 0;
+        copyRegion.dstOffset = 0;
+        copyRegion.size = size;
+        vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
     }
-    #endif
+    vkEndCommandBuffer(commandBuffer);
 
-    VkApplicationInfo appInfo = {};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Ichor";
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.pEngineName = "Project Ichor";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
 
-    VkInstanceCreateInfo createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    vkQueueSubmit(logicalDevice->graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(logicalDevice->graphicsQueue);
 
-    auto extensions = getRequiredExtensions();
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-    createInfo.ppEnabledExtensionNames = extensions.data();
+    vkFreeCommandBuffers(logicalDevice->device, commandPool, 1, &commandBuffer);
+}
 
-    #ifdef ERROR_CHECKING
-    createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-    createInfo.ppEnabledLayerNames = validationLayers.data();
-    #else
-    createInfo.enabledLayerCount = 0;
-    #endif
+void IchorApplication::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+{
+    VkBufferCreateInfo bufferInfo = {};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
+    VkResult result = vkCreateBuffer(logicalDevice->device, &bufferInfo, nullptr, &buffer);
+
     if (result != VK_SUCCESS)
     {
-        std::cout << "ERROR: " << result << std::endl;
-        throw std::runtime_error("[Ichor] Failed to create vulkan instance");
+        throw std::runtime_error("[Ichor] Failed to create buffer");
     }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(logicalDevice->device, buffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+    result = vkAllocateMemory(logicalDevice->device, &allocInfo, nullptr, &bufferMemory);
+
+    if (result != VK_SUCCESS)
+    {
+        throw std::runtime_error("[Ichor] Failed to allocate buffer memory");
+    }
+
+    vkBindBufferMemory(logicalDevice->device, buffer, bufferMemory, 0);
+}
+
+uint32_t IchorApplication::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice->physicalDevice, &memProperties);
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+    {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+        {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("[Ichor] Failed to find suitable memory type");
 }
 
 void IchorApplication::recreateSwapChain()
@@ -255,12 +341,15 @@ void IchorApplication::recreateSwapChain()
         glfwWaitEvents();
     }
 
-    vkDeviceWaitIdle(device);
+    vkDeviceWaitIdle(logicalDevice->device);
 
-    cleanupSwapChain();
+    vkDestroyPipeline(logicalDevice->device, graphicsPipeline, nullptr);
+    vkDestroyPipelineLayout(logicalDevice->device, pipelineLayout, nullptr);
+    vkDestroyRenderPass(logicalDevice->device, renderPass, nullptr);
 
-    createSwapChain();
-    createImageViews();
+    delete this->swapchain;
+    swapchain = new Swapchain(this);
+
     createRenderPass();
     createGraphicsPipeline();
     createFramebuffers();
@@ -282,9 +371,9 @@ void IchorApplication::createSyncObjects()
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
-        VkResult imageAvailableResult = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]);
-        VkResult renderFinishedResult = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]);
-        VkResult fenceResult = vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]);
+        VkResult imageAvailableResult = vkCreateSemaphore(logicalDevice->device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]);
+        VkResult renderFinishedResult = vkCreateSemaphore(logicalDevice->device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]);
+        VkResult fenceResult = vkCreateFence(logicalDevice->device, &fenceInfo, nullptr, &inFlightFences[i]);
 
         if (imageAvailableResult != VK_SUCCESS || renderFinishedResult != VK_SUCCESS || fenceResult != VK_SUCCESS)
         {
@@ -295,7 +384,7 @@ void IchorApplication::createSyncObjects()
 
 void IchorApplication::createCommandBuffers()
 {
-    commandBuffers.resize(swapChainFramebuffers.size());
+    commandBuffers.resize(swapchain->swapChainFramebuffers.size());
 
     VkCommandBufferAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -303,7 +392,7 @@ void IchorApplication::createCommandBuffers()
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocInfo.commandBufferCount = (uint32_t) commandBuffers.size();
 
-    VkResult result = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
+    VkResult result = vkAllocateCommandBuffers(logicalDevice->device, &allocInfo, commandBuffers.data());
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to allocate command buffers");
@@ -325,10 +414,10 @@ void IchorApplication::createCommandBuffers()
         VkRenderPassBeginInfo renderPassInfo = {};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = swapChainFramebuffers[i];
+        renderPassInfo.framebuffer = swapchain->swapChainFramebuffers[i];
 
         renderPassInfo.renderArea.offset = {0, 0};
-        renderPassInfo.renderArea.extent = swapChainExtent;
+        renderPassInfo.renderArea.extent = swapchain->swapChainExtent;
 
         VkClearValue clearColor;
         clearColor.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
@@ -336,11 +425,17 @@ void IchorApplication::createCommandBuffers()
         renderPassInfo.pClearValues = &clearColor;
 
         vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        {
+            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            VkBuffer vertexBuffers[] = {vertexBuffer};
+            VkDeviceSize offsets[] = {0};
 
-        vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
+            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+        }
         vkCmdEndRenderPass(commandBuffers[i]);
 
         VkResult recordResult = vkEndCommandBuffer(commandBuffers[i]);
@@ -353,14 +448,14 @@ void IchorApplication::createCommandBuffers()
 
 void IchorApplication::createCommandPool()
 {
-    QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+    QueueFamilyIndices queueFamilyIndices = VulkanQueueFamilies::findQueueFamilies(physicalDevice->physicalDevice, surface);
 
     VkCommandPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily;
     poolInfo.flags = 0;
 
-    VkResult result = vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool);
+    VkResult result = vkCreateCommandPool(logicalDevice->device, &poolInfo, nullptr, &commandPool);
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to create command pool");
@@ -369,13 +464,13 @@ void IchorApplication::createCommandPool()
 
 void IchorApplication::createFramebuffers()
 {
-    swapChainFramebuffers.resize(swapChainImageViews.size());
+    swapchain->swapChainFramebuffers.resize(swapchain->swapChainImageViews.size());
 
-    for (size_t i = 0; i < swapChainImageViews.size(); i++)
+    for (size_t i = 0; i < swapchain->swapChainImageViews.size(); i++)
     {
         VkImageView attachments[] =
         {
-            swapChainImageViews[i]
+            swapchain->swapChainImageViews[i]
         };
 
         VkFramebufferCreateInfo framebufferInfo = {};
@@ -383,11 +478,11 @@ void IchorApplication::createFramebuffers()
         framebufferInfo.renderPass = renderPass;
         framebufferInfo.attachmentCount = 1;
         framebufferInfo.pAttachments = attachments;
-        framebufferInfo.width = swapChainExtent.width;
-        framebufferInfo.height = swapChainExtent.height;
+        framebufferInfo.width = swapchain->swapChainExtent.width;
+        framebufferInfo.height = swapchain->swapChainExtent.height;
         framebufferInfo.layers = 1;
 
-        VkResult result = vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]);
+        VkResult result = vkCreateFramebuffer(logicalDevice->device, &framebufferInfo, nullptr, &(swapchain->swapChainFramebuffers[i]));
         if (result != VK_SUCCESS)
         {
             throw std::runtime_error("[Ichor] Failed to create framebuffer");
@@ -398,7 +493,7 @@ void IchorApplication::createFramebuffers()
 void IchorApplication::createRenderPass()
 {
     VkAttachmentDescription colorAttachment = {};
-    colorAttachment.format = swapChainImageFormat;
+    colorAttachment.format = swapchain->swapChainImageFormat;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
 
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -439,7 +534,7 @@ void IchorApplication::createRenderPass()
     renderPassInfo.dependencyCount = 1;
     renderPassInfo.pDependencies = &dependency;
 
-    VkResult result = vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass);
+    VkResult result = vkCreateRenderPass(logicalDevice->device, &renderPassInfo, nullptr, &renderPass);
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to create render pass");
@@ -470,13 +565,17 @@ void IchorApplication::createGraphicsPipeline()
     fragShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
-
+    
     VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.pVertexBindingDescriptions = nullptr;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-    vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -486,14 +585,14 @@ void IchorApplication::createGraphicsPipeline()
     VkViewport viewport = {};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = (float) swapChainExtent.width;
-    viewport.height = (float) swapChainExtent.height;
+    viewport.width = (float) swapchain->swapChainExtent.width;
+    viewport.height = (float) swapchain->swapChainExtent.height;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
 
     VkRect2D scissor = {};
     scissor.offset = {0, 0};
-    scissor.extent = swapChainExtent;
+    scissor.extent = swapchain->swapChainExtent;
 
     VkPipelineViewportStateCreateInfo viewportState = {};
     viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -552,7 +651,7 @@ void IchorApplication::createGraphicsPipeline()
     pipelineLayoutInfo.pushConstantRangeCount = 0;
     pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
-    VkResult createPipelineLayout = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+    VkResult createPipelineLayout = vkCreatePipelineLayout(logicalDevice->device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
     if (createPipelineLayout != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to create pipeline layout");
@@ -579,14 +678,14 @@ void IchorApplication::createGraphicsPipeline()
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
     pipelineInfo.basePipelineIndex = -1;
 
-    VkResult createPipeline = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline);
+    VkResult createPipeline = vkCreateGraphicsPipelines(logicalDevice->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline);
     if (createPipeline != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to create graphics pipeline");
     }
 
-    vkDestroyShaderModule(device, fragShaderModule, nullptr);
-    vkDestroyShaderModule(device, vertShaderModule, nullptr);
+    vkDestroyShaderModule(logicalDevice->device, fragShaderModule, nullptr);
+    vkDestroyShaderModule(logicalDevice->device, vertShaderModule, nullptr);
 }
 
 VkShaderModule IchorApplication::createShaderModule(const std::vector<char>& code)
@@ -597,7 +696,7 @@ VkShaderModule IchorApplication::createShaderModule(const std::vector<char>& cod
     createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
     VkShaderModule shaderModule;
-    VkResult result = vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule);
+    VkResult result = vkCreateShaderModule(logicalDevice->device, &createInfo, nullptr, &shaderModule);
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to create shader module");
@@ -606,393 +705,12 @@ VkShaderModule IchorApplication::createShaderModule(const std::vector<char>& cod
     return shaderModule;
 }
 
-void IchorApplication::createImageViews()
-{
-    swapChainImageViews.resize(swapChainImages.size());
-
-    for (size_t i = 0; i < swapChainImages.size(); i++)
-    {
-        VkImageViewCreateInfo createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = swapChainImages[i];
-
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = swapChainImageFormat;
-
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
-
-        VkResult result = vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]);
-        if (result != VK_SUCCESS)
-        {
-            throw std::runtime_error("[Ichor] Failed to create image view");
-        }
-    }
-}
-
 void IchorApplication::createSurface()
 {
-    if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS)
+    if (glfwCreateWindowSurface(instance->instance, window, nullptr, &surface) != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to create window surface");
     }
-}
-
-void IchorApplication::createSwapChain()
-{
-    SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
-
-    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
-    VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
-    VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
-
-    uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
-    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
-    {
-        imageCount = swapChainSupport.capabilities.maxImageCount;
-    }
-
-    VkSwapchainCreateInfoKHR createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-    createInfo.surface = surface;
-
-    createInfo.minImageCount = imageCount;
-    createInfo.imageFormat = surfaceFormat.format;
-    createInfo.imageColorSpace = surfaceFormat.colorSpace;
-    createInfo.imageExtent = extent;
-    createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-    QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-    uint32_t queueFamilyIndices[] = {(uint32_t) indices.graphicsFamily, (uint32_t) indices.presentFamily};
-
-    if (indices.graphicsFamily != indices.presentFamily)
-    {
-        createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-        createInfo.queueFamilyIndexCount = 2;
-        createInfo.pQueueFamilyIndices = queueFamilyIndices;
-    }
-    else
-    {
-        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        createInfo.queueFamilyIndexCount = 0;
-        createInfo.pQueueFamilyIndices = nullptr;
-    }
-
-    createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
-    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-
-    createInfo.presentMode = presentMode;
-    createInfo.clipped = VK_TRUE;
-
-    createInfo.oldSwapchain = VK_NULL_HANDLE;
-
-    VkResult result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain);
-    if (result != VK_SUCCESS)
-    {
-        throw std::runtime_error("[Ichor] Failed to create swap chain");
-    }
-
-    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
-    swapChainImages.resize(imageCount);
-    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
-
-    swapChainImageFormat = surfaceFormat.format;
-    swapChainExtent = extent;
-}
-
-void IchorApplication::createLogicalDevice()
-{
-    QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-
-    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-    std::set<int> uniqueQueueFamilies = {indices.graphicsFamily, indices.presentFamily};
-
-    float queuePriority = 1.0f;
-    for (int queueFamily : uniqueQueueFamilies)
-    {
-        VkDeviceQueueCreateInfo queueCreateInfo = {};
-        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfo.queueFamilyIndex = queueFamily;
-        queueCreateInfo.queueCount = 1;
-        queueCreateInfo.pQueuePriorities = &queuePriority;
-        queueCreateInfos.push_back(queueCreateInfo);
-    }
-
-    VkPhysicalDeviceFeatures deviceFeatures = {};
-
-    VkDeviceCreateInfo createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-
-    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
-    createInfo.pQueueCreateInfos = queueCreateInfos.data();
-
-    createInfo.pEnabledFeatures = &deviceFeatures;
-
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = deviceExtensions.data();
-
-    #ifdef ERROR_CHECKING
-    createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-    createInfo.ppEnabledLayerNames = validationLayers.data();
-    #else
-    createInfo.enabledLayerCount = 0;
-    #endif
-
-    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
-    {
-        throw std::runtime_error("[Ichor] Failed to create logical device");
-    }
-
-    vkGetDeviceQueue(device, indices.graphicsFamily, 0, &graphicsQueue);
-    vkGetDeviceQueue(device, indices.presentFamily, 0, &presentQueue);
-}
-
-QueueFamilyIndices IchorApplication::findQueueFamilies(VkPhysicalDevice device)
-{
-    QueueFamilyIndices indices;
-
-    uint32_t queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-
-    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
-
-    int i = 0;
-    for (const auto& queueFamily : queueFamilies)
-    {
-        if (queueFamily.queueCount > 0 && queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            indices.graphicsFamily = i;
-        }
-
-        VkBool32 presentSupport = false;
-        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
-
-        if (queueFamily.queueCount > 0 && presentSupport)
-        {
-            indices.presentFamily = i;
-        }
-
-        if (indices.isComplete())
-        {
-            break;
-        }
-
-        i++;
-    }
-
-    return indices;
-}
-
-void IchorApplication::pickPhysicalDevice()
-{
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
-
-    if (deviceCount == 0)
-    {
-        throw std::runtime_error("[Ichor] No GPUs detected with vulkan support");
-    }
-
-    std::vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
-
-    for (const auto& device : devices)
-    {
-        if (isDeviceSuitable(device))
-        {
-            physicalDevice = device;
-            break;
-        }
-    }
-
-    if (physicalDevice == VK_NULL_HANDLE)
-    {
-        throw std::runtime_error("[Ichor] Failed to find a suitable GPU");
-    }
-}
-
-bool IchorApplication::isDeviceSuitable(VkPhysicalDevice device)
-{
-    VkPhysicalDeviceProperties deviceProperties;
-    vkGetPhysicalDeviceProperties(device, &deviceProperties);
-
-    VkPhysicalDeviceFeatures deviceFeatures;
-    vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
-
-    bool isDiscrete = deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
-
-    QueueFamilyIndices indices = findQueueFamilies(device);
-
-    bool extensionsSupported = checkDeviceExtensionSupport(device);
-
-    bool swapChainAdequate = false;
-    if (extensionsSupported)
-    {
-        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
-        swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
-    }
-
-    return indices.isComplete() && isDiscrete && extensionsSupported && swapChainAdequate;
-}
-
-bool IchorApplication::checkDeviceExtensionSupport(VkPhysicalDevice device)
-{
-    uint32_t extensionCount;
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
-
-    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
-
-    std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
-
-    for (const auto& extension : availableExtensions)
-    {
-        requiredExtensions.erase(extension.extensionName);
-    }
-
-    return requiredExtensions.empty();
-}
-
-SwapChainSupportDetails IchorApplication::querySwapChainSupport(VkPhysicalDevice device)
-{
-    SwapChainSupportDetails details;
-
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
-
-    uint32_t formatCount;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
-
-    if (formatCount != 0)
-    {
-        details.formats.resize(formatCount);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
-    }
-
-    uint32_t presentModeCount;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
-
-    if (presentModeCount != 0)
-    {
-        details.presentModes.resize(presentModeCount);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
-    }
-
-    return details;
-}
-
-VkSurfaceFormatKHR IchorApplication::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
-{
-    if (availableFormats.size() == 1 && availableFormats[0].format == VK_FORMAT_UNDEFINED)
-    {
-        return { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
-    }
-
-    for (const auto& availableFormat : availableFormats)
-    {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-        {
-            return availableFormat;
-        }
-    }
-
-    return availableFormats[0];
-}
-
-VkPresentModeKHR IchorApplication::chooseSwapPresentMode(const std::vector<VkPresentModeKHR> availablePresentModes)
-{
-    VkPresentModeKHR bestMode = VK_PRESENT_MODE_FIFO_KHR;
-
-    for (const auto& availablePresentMode : availablePresentModes)
-    {
-        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
-        {
-            return availablePresentMode;
-        }
-        else if (availablePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR)
-        {
-            bestMode = availablePresentMode;
-        }
-    }
-
-    return bestMode;
-}
-
-VkExtent2D IchorApplication::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
-{
-    if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
-    {
-        return capabilities.currentExtent;
-    }
-    else
-    {
-        int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
-
-        VkExtent2D actualExtent = {
-            static_cast<uint32_t>(width),
-            static_cast<uint32_t>(height)
-        };
-
-        actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
-        actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
-
-        return actualExtent;
-    }
-}
-
-std::vector<const char*> IchorApplication::getRequiredExtensions()
-{
-    uint32_t glfwExtensionCount = 0;
-    const char** glfwExtensions;
-    glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-    std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-
-    #ifdef ERROR_CHECKING
-    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    #endif
-
-    return extensions;
-}
-
-bool IchorApplication::checkValidationLayerSupport()
-{
-    uint32_t layerCount;
-    vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-
-    std::vector<VkLayerProperties> availableLayers(layerCount);
-    vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
-
-    for (const char* layerName : validationLayers) 
-    {
-        bool layerFound = false;
-
-        for (const auto& layerProperties : availableLayers) 
-        {
-            if (strcmp(layerName, layerProperties.layerName) == 0) 
-            {
-                layerFound = true;
-                break;
-            }
-        }
-
-        if (!layerFound) 
-        {
-            return false;
-        }
-    }
-
-    return true;
 }
 
 void IchorApplication::setupDebugCallback()
