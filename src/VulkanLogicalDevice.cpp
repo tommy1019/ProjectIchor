@@ -8,9 +8,9 @@
 #include "VulkanExtension.h"
 #include "VulkanValidationLayers.h"
 
-VulkanLogicalDevice::VulkanLogicalDevice(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface)
+VulkanLogicalDevice::VulkanLogicalDevice(VulkanPhysicalDevice* physicalDevice, VulkanSurface* surface)
 {
-    QueueFamilyIndices indices = VulkanQueueFamilies::findQueueFamilies(physicalDevice, surface);
+    QueueFamilyIndices indices = VulkanQueueFamilies::findQueueFamilies(physicalDevice->physicalDevice, surface->surface);
 
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
     std::set<int> uniqueQueueFamilies = {indices.graphicsFamily, indices.presentFamily};
@@ -49,7 +49,8 @@ VulkanLogicalDevice::VulkanLogicalDevice(VkPhysicalDevice physicalDevice, VkSurf
         createInfo.enabledLayerCount = 0;
     }
 
-    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
+    VkResult result = vkCreateDevice(physicalDevice->physicalDevice, &createInfo, nullptr, &device);
+    if (result != VK_SUCCESS)
     {
         throw std::runtime_error("[Ichor] Failed to create logical device");
     }

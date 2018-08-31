@@ -4,12 +4,12 @@
 
 #include "VulkanQueueFamilies.h"
 #include "VulkanExtension.h"
-#include "Swapchain.h"
+#include "VulkanSwapchain.h"
 
-VulkanPhysicalDevice::VulkanPhysicalDevice(VkInstance instance, VkSurfaceKHR surface)
+VulkanPhysicalDevice::VulkanPhysicalDevice(VulkanInstance* instance, VulkanSurface* surface)
 {
     uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+    vkEnumeratePhysicalDevices(instance->instance, &deviceCount, nullptr);
 
     if (deviceCount == 0)
     {
@@ -17,11 +17,11 @@ VulkanPhysicalDevice::VulkanPhysicalDevice(VkInstance instance, VkSurfaceKHR sur
     }
 
     std::vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+    vkEnumeratePhysicalDevices(instance->instance, &deviceCount, devices.data());
 
     for (const auto& device : devices)
     {
-        if (isDeviceSuitable(device, surface))
+        if (isDeviceSuitable(device, surface->surface))
         {
             physicalDevice = device;
             break;
@@ -32,11 +32,6 @@ VulkanPhysicalDevice::VulkanPhysicalDevice(VkInstance instance, VkSurfaceKHR sur
     {
         throw std::runtime_error("[Ichor] Failed to find a suitable GPU");
     }
-}
-
-VulkanPhysicalDevice::~VulkanPhysicalDevice()
-{
-
 }
 
 bool VulkanPhysicalDevice::isDeviceSuitable(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface)
@@ -56,7 +51,7 @@ bool VulkanPhysicalDevice::isDeviceSuitable(VkPhysicalDevice physicalDevice, VkS
     bool swapChainAdequate = false;
     if (extensionsSupported)
     {
-        SwapChainSupportDetails swapChainSupport = Swapchain::querySwapChainSupport(physicalDevice, surface);
+        SwapChainSupportDetails swapChainSupport = VulkanSwapchain::querySwapChainSupport(physicalDevice, surface);
         swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
     }
 

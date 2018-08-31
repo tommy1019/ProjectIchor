@@ -4,6 +4,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include "VulkanPhysicalDevice.h"
+#include "VulkanSurface.h"
+
 class VulkanLogicalDevice
 {
 public:
@@ -12,7 +15,7 @@ public:
     VkQueue graphicsQueue;
     VkQueue presentQueue;
     
-    VulkanLogicalDevice(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);
+    VulkanLogicalDevice(VulkanPhysicalDevice* physicalDevice, VulkanSurface* surface);
     ~VulkanLogicalDevice();
 };
 

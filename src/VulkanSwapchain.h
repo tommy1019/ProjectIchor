@@ -6,7 +6,12 @@
 
 #include <vector>
 
-class IchorApplication;
+#include "VulkanPhysicalDevice.h"
+#include "VulkanLogicalDevice.h"
+#include "VulkanSurface.h"
+#include "Window.h"
+
+class VulkanRenderPass;
 
 struct SwapChainSupportDetails
 {
@@ -15,10 +20,10 @@ struct SwapChainSupportDetails
     std::vector<VkPresentModeKHR> presentModes;
 };
 
-class Swapchain
+class VulkanSwapchain
 {
 private:
-    IchorApplication* app;
+    VulkanLogicalDevice* logicalDevice;
 
     std::vector<VkImage> swapChainImages;
 
@@ -32,15 +37,17 @@ public:
     std::vector<VkImageView> swapChainImageViews;
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
-    Swapchain(IchorApplication* app);
-    ~Swapchain();
+    VulkanSwapchain(VulkanSurface* surface, Window* window, VulkanLogicalDevice* logicalDevice, VulkanPhysicalDevice* physicalDevice);
+    ~VulkanSwapchain();
+
+    void createFramebuffers(VulkanRenderPass* renderPass);
 
 private:
     void createImageViews();
 
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
     VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> availablePresentModes);
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, Window* window);
 };
 
 #endif

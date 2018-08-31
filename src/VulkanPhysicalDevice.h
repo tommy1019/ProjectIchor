@@ -4,16 +4,18 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include "VulkanInstance.h"
+#include "VulkanSurface.h"
+
 class VulkanPhysicalDevice
 {
 public:
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
-    VulkanPhysicalDevice(VkInstance instance, VkSurfaceKHR surface);
-    ~VulkanPhysicalDevice();
+    VulkanPhysicalDevice(VulkanInstance* instance, VulkanSurface* surface);
 
 private:
-    bool isDeviceSuitable(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);
+    static bool isDeviceSuitable(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);
 };
 
 #endif
